@@ -1,5 +1,5 @@
 ---
-title: "Bayesing-based PK modelling of clonidine with informative priors"
+title: "Bayesing-based popPK modeling of clonidine with informative priors"
 author: "Paweł Wiczling"
 date: "`r format(Sys.Date())`"
 output:
@@ -19,6 +19,8 @@ output:
 \pagebreak
 
 # Setup
+
+The codes are based on STAN/Torsten manual https://metrumresearchgroup.github.io/Torsten/
 
 **Load packages:**
 
@@ -42,9 +44,7 @@ set.seed(10271998) ## not required but assures repeatable results
 
 # Introduction
 
-
-The aim of this study is to illustrate applicability of Bayesian approach with informative priors to analyze small PK data.
-
+The aim of this case study was to develop a population pharmacokinetic model of clonidine using Bayesian methods and an open-source programming environment RStudio, the programming language Stan and a library of pharmacokinetic tools Torsten. 
 
 ```{r, include=FALSE}
 
@@ -58,7 +58,7 @@ knitr::opts_chunk$set(cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, com
 
 # Data 
 
-The head of the analyzed data set:
+The analyzed PK data was obtained from 17 children (Department of Pediatric Anesthesiology and Intensive Care in Poznan). The results presented in the publication by Potts et al. [1] were used as a prior information (a meta-analysis of five studies conducted in Sweden and New Zealand). The head of the analyzed data:
 
 ```{r include=TRUE}
 
@@ -81,7 +81,7 @@ head(xdata)
 
 ## Raw Data
 
-First a simple graphical presentation of the data. Red plots denote outliers (unknown origin).
+First a simple graphical presentation of the data. Red plots denote outliers of unknown origin.
 
 ```{r include=TRUE}
 
@@ -163,7 +163,11 @@ $$
 
 LKJ(4) ensure that the density is uniform over correlation matrices of order 4 and u denotes the unique lower triangular elements of correlation matrix (http://srmart.in/informative-priors-for-correlation-matrices-an-easy-approach/)
 
+$fr$ is a form of a commensurate priors [2].
+
 # Format data for Stan
+
+
 
 ```{r include=TRUE}
 
@@ -470,7 +474,9 @@ plot1234 <- grid.arrange(grobs = list(p1, p2, p3, p4), nraw=4)
 
 # References
 
-1. Potts AL, Larsson P, Eksborg S, Warman G, Lönnqvist PA, Anderson BJ. Clonidine disposition in children; a population analysis. Paediatr Anaesth. 2007 Oct;17(10):924-33. doi: 10.1111/j.1460-9592.2007.02251.x. PMID: 17767627. 
+1. Potts AL, Larsson P, Eksborg S, Warman G, Lönnqvist PA, Anderson BJ. Clonidine disposition in children; a population analysis. Paediatr Anaesth. 2007 Oct;17(10):924-33. doi: 10.1111/j.1460-9592.2007.02251.x. PMID: 17767627.
+
+2.Hobbs BP, Sargent DJ, Carlin BP. Commensurate Priors for Incorporating Historical Information in Clinical Trials Using General and Generalized Linear Models. Bayesian Anal. 2012 Aug 28;7(3):639-674. doi: 10.1214/12-BA722. PMID: 24795786; PMCID: PMC4007051.
 
 # Licenses {.unnumbered}
 

@@ -13,7 +13,7 @@
 
 <meta name="date" content="2023-04-03" />
 
-<title>Bayesing-based PK modelling of clonidine with informative priors</title>
+<title>Bayesing-based popPK modeling of clonidine with informative priors</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -1511,7 +1511,7 @@ div.tocify {
 
 
 
-<h1 class="title toc-ignore">Bayesing-based PK modelling of clonidine
+<h1 class="title toc-ignore">Bayesing-based popPK modeling of clonidine
 with informative priors</h1>
 <h4 class="author">Paweł Wiczling</h4>
 <h4 class="date">2023-04-03</h4>
@@ -1522,6 +1522,7 @@ with informative priors</h1>
 <div style="page-break-after: always;"></div>
 <div id="setup" class="section level1" number="1">
 <h1><span class="header-section-number">1</span> Setup</h1>
+<p>The codes are based on STAN/Torsten manual <a href="https://metrumresearchgroup.github.io/Torsten/" class="uri">https://metrumresearchgroup.github.io/Torsten/</a></p>
 <p><strong>Load packages:</strong></p>
 <pre class="r"><code># Instaling Stan and Torsten might be difficult. Follow this advice in case of any troubles:
 # https://discourse.mc-stan.org/t/installation-on-windows-revisited/20207
@@ -1541,14 +1542,18 @@ set.seed(10271998) ## not required but assures repeatable results</code></pre>
 </div>
 <div id="introduction" class="section level1" number="2">
 <h1><span class="header-section-number">2</span> Introduction</h1>
-<p>The aim of this study is to illustrate applicability of Bayesian
-approach to analyze small PK data. Statistical analysis was based on the
-standard PK methods used in the population PK analysis of drugs
-(hierarchical modeling using Bayesian inference).</p>
+<p>The aim of this case study was to develop a population
+pharmacokinetic model of clonidine using Bayesian methods and an
+open-source programming environment RStudio, the programming language
+Stan and a library of pharmacokinetic tools Torsten.</p>
 </div>
 <div id="data" class="section level1" number="3">
 <h1><span class="header-section-number">3</span> Data</h1>
-<p>The current data is limited. The head of the dataset:</p>
+<p>The analyzed PK data was obtained from 17 children (Department of
+Pediatric Anesthesiology and Intensive Care in Poznan). The results
+presented in the publication by Potts et al. [1] were used as a prior
+information (a meta-analysis of five studies conducted in Sweden and New
+Zealand). The head of the analyzed data:</p>
 <pre class="r"><code>xdata &lt;- read.csv(&quot;../Data/data-clonidine.csv&quot;)
 colnames(xdata)[1] &lt;- &quot;ID&quot;
 
@@ -1592,10 +1597,10 @@ head(xdata)</code></pre>
 4     2      3     1     2   0    0   1    FALSE     TRUE -5.916667e+00
 5     2      3     1     2   0    0   1    FALSE    FALSE  3.333333e-07
 6     2      3     1     2   0    0   1    FALSE    FALSE  8.333333e-02</code></pre>
-<div id="concentrations" class="section level2" number="3.1">
-<h2><span class="header-section-number">3.1</span> Concentrations</h2>
+<div id="raw-data" class="section level2" number="3.1">
+<h2><span class="header-section-number">3.1</span> Raw Data</h2>
 <p>First a simple graphical presentation of the data. Red plots denote
-outliers.</p>
+outliers of unknown origin.</p>
 <pre class="r"><code>## Some plotting
 plot1&lt;-ggplot(data = subset(xdata, EVID == 0 &amp; outliers==0 &amp; infusion==1), aes(x = TIMEh, y = DV, group = ID)) + 
   geom_point() + 
@@ -1665,8 +1670,8 @@ between subject variability.</p>
 </div>
 <div id="priors" class="section level2" number="4.2">
 <h2><span class="header-section-number">4.2</span> Priors</h2>
-<p>To complete the model we need to specify prior. They are based
-entirely on [1].</p>
+<p>The priors were specified based on paramter estimates provided by
+Potts et al. [1].</p>
 <p><span class="math display">\[
   \theta_{CL} \sim lognormal(log(14.6),0.06), \\
    \theta_{Q} \sim lognormal(log(157),0.111), \\
@@ -1689,6 +1694,8 @@ entirely on [1].</p>
 <p>LKJ(4) ensure that the density is uniform over correlation matrices
 of order 4 and u denotes the unique lower triangular elements of
 correlation matrix (<a href="http://srmart.in/informative-priors-for-correlation-matrices-an-easy-approach/" class="uri">http://srmart.in/informative-priors-for-correlation-matrices-an-easy-approach/</a>)</p>
+<p><span class="math inline">\(fr\)</span> is a form of a commensurate
+priors [2].</p>
 </div>
 </div>
 <div id="format-data-for-stan" class="section level1" number="5">
@@ -2215,12 +2222,16 @@ Clonidine disposition in children; a population analysis. Paediatr
 Anaesth. 2007 Oct;17(10):924-33. doi: 10.1111/j.1460-9592.2007.02251.x.
 PMID: 17767627.</li>
 </ol>
+<p>2.Hobbs BP, Sargent DJ, Carlin BP. Commensurate Priors for
+Incorporating Historical Information in Clinical Trials Using General
+and Generalized Linear Models. Bayesian Anal. 2012 Aug 28;7(3):639-674.
+doi: 10.1214/12-BA722. PMID: 24795786; PMCID: PMC4007051.</p>
 </div>
 <div id="licenses" class="section level1 unnumbered">
 <h1 class="unnumbered">Licenses</h1>
 <ul>
-<li>Code &amp; copy; 2021, Paweł Wiczling, licensed under BSD-3.</li>
-<li>Text &amp; copy; 2021, Paweł Wiczling, licensed under CC-BY-NC
+<li>Code &amp; copy; 2023, Paweł Wiczling, licensed under BSD-3.</li>
+<li>Text &amp; copy; 2023, Paweł Wiczling, licensed under CC-BY-NC
 4.0.</li>
 </ul>
 </div>
