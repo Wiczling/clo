@@ -1,0 +1,493 @@
+---
+title: "Bayesing-based popPK modeling of clonidine with informative priors"
+author:
+  - name: "Paweł Wiczling*"
+    affiliations:
+      - name: "Department of Biopharmaceutics and Pharmacodynamics, Medical University of Gdańsk, Gen. J. Hallera 107, 80-416 Gdańsk, Poland"
+date: "`r format(Sys.Date())`"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: true  
+    code-tools: true
+    fig-width: 7
+    fig-height: 7
+---
+
+# Setup
+
+The codes are based on STAN/Torsten manual <https://metrumresearchgroup.github.io/Torsten/>
+
+The packages we will use are listed below.
+
+```{r setup, message=FALSE}
+#' Instaling Stan and Torsten might be difficult. Follow this advice in case of any troubles:
+#' https://discourse.mc-stan.org/t/installation-on-windows-revisited/20207
+#' https://github.com/stan-dev/cmdstan/issues/909
+
+library(cmdstanr)
+set_cmdstan_path("C:/Users/pawel/Documents/.cmdstan/Torsten-master/Torsten-master/cmdstan")
+library(ggplot2)
+library(gridExtra)
+library(rstan)
+library(tidyr)
+library(dplyr)
+library(posterior)
+library(bayesplot)
+# library(shinystan)
+
+set.seed(123) ## not required but assures repeatable results
+```
+
+# Introduction
+
+The aim of this case study was to develop a population pharmacokinetic model of clonidine using Bayesian methods and an open-source programming environment RStudio, the programming language Stan and a library of pharmacokinetic tools Torsten.
+
+```{r knitr-options, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, comment=NA, out.width='95%')
+```
+
+# Data
+
+The analyzed PK data was obtained from 17 children (Department of Pediatric Anesthesiology and Intensive Care in Poznan). The results presented in the publication by Potts et al. [@potts_clonidine_2007] were used as a prior information (a meta-analysis of five studies conducted in Sweden and New Zealand). The head of the analyzed data:
+
+```{r load-data, include=TRUE}
+
+xdata <- read.csv("../data/data-clonidine.csv")
+
+colnames(xdata)[1] <- "ID"
+
+xdata$TINF <- xdata$TINF/60;
+xdata$DV <- xdata$DV/1000;
+
+xdata$MDV[107] <- 1;
+xdata$EVID[107] <- 1;
+
+xdata$OUTLIERS = xdata$DV>20;
+xdata$INFUSION = xdata$TIMEh<xdata$TINF;
+xdata$TIMEPOST = xdata$TIMEh-xdata$TINF;
+
+head(xdata)
+```
+
+## Raw Data
+
+First a simple graphical presentation of the data. Red plots denote outliers of unknown origin.
+
+```{r plot-raw-data, include=TRUE}
+
+plot1<-ggplot(data = subset(xdata, EVID == 0 & OUTLIERS==0 & INFUSION==1), 
+              aes(x = TIMEh, y = DV, group = ID)) + 
+  geom_point() + 
+  geom_line() + 
+  geom_point(data = subset(xdata, EVID == 0 & OUTLIERS==1 & INFUSION==1), 
+             aes(x = TIMEh, y = DV, group = ID),colour = "red") + 
+  scale_y_log10(limits = c(0.1, 250))+
+  ylab("Clonindne, ng/ml") +
+  xlab("Time after infutions start, h") + 
+  theme(legend.position = "none")
+
+plot2<-ggplot(data = subset(xdata, EVID == 0 & OUTLIERS==0 & INFUSION==0), 
+              aes(x = TIMEPOST, y = DV, group = ID)) + 
+  geom_point() + 
+  geom_line() + 
+  geom_point(data = subset(xdata, EVID == 0 & OUTLIERS==1 & INFUSION==0), 
+             aes(x = TIMEPOST, y = DV, group = ID),colour = "red") + 
+  scale_y_log10(limits = c(0.1, 250))+
+  ylab("Clonindne, ng/ml") +
+  xlab("Time after infusion end, h")+
+  theme(legend.position = "none") 
+
+plot12 <- grid.arrange(plot1, plot2, ncol=2)
+
+ggsave("../deliv/figures/raw-data.png", 
+        plot=plot12, 
+        width = 15, height = 15, units = "cm",  dpi=300)
+
+```
+
+# Methods
+
+## Model
+
+The data was analyzed using a 2 comp. PK model [1].
+
+$$
+\begin{aligned}
+& V_1 \cdot \frac{dC_1}{dt} = Input(t) - CL \cdot  C_1 - Q \cdot  C_1 + Q \cdot  C_2 \\
+& V_2 \cdot \frac{dC_2}{dt} =  Q \cdot  C1 - Q \cdot  C_2
+\end{aligned}
+$$
+
+where $C_1$ and $C_2$ denote clonidine concentrations in plasma and peripheral compartment. $Input(t)$ denotes clonidine dosing specific for a patient. The statistical model has the following structure (hierarchical model):
+
+$$ 
+\begin{aligned}
+& \log C_{Obs_{i,j}} \sim student_t(\nu_1,f_1(P_{i},t_{i,j}),\sigma_1) \\
+& \log P_{i} \sim \text{MVN}(\log \theta_P + logfr_P+ allo_P \cdot \log(BW_i/70) + maturation_i, \Omega) \\
+& maturation_i = log(1-(1-\beta) \cdot exp(-(4 \cdot AGE_i) \cdot 0.693/Tcl)) \ for \ CL \ only
+\end{aligned}
+$$
+
+where $P_i=(CL_{i}, Q_{i}, V1_{i}, V2_{i})$ is a vector of subject-specific parameters, $f_1(.)$ corresponds to the above ODE equations, $MVN$ is a multivariate normal distribution, $\theta_P$ is a vector of typical values of $P_i$, $allo_p$ is a vector of slopes between $P_i$ and $BW_i$. $maturation_i$ denotes a maturation function for CL. In turn, $\sigma$ is the scale and $\Omega$ is the scale matrix for the random effects related to the residual and unexplained between-subject variability. $fr_{P}$ is the difference between the literature and studied population. For convenience $\Omega$ was decomposed to:
+
+$$
+\Omega = diag(\omega) \cdot LL' \cdot diag(\omega) 
+$$
+
+where $\rho = LL'$ denotes correlation, $L$ is a lower triangular Cholesky factor for a correlation matrix and $\omega$ denotes standard deviation for between subject variability.
+
+## Priors
+
+The priors were specified based on parameter estimates provided by Potts et al. [@potts_clonidine_2007].
+
+$$ 
+\begin{aligned}
+& \theta_{CL} \sim lognormal(log(14.6),0.06), \\
+& \theta_{Q} \sim lognormal(log(157),0.111), \\
+& \theta_{V1} \sim lognormal(log(62.5),0.17), \\
+& \theta_{V2} \sim lognormal(log(119),0.087), \\
+& \beta \sim lognormal(log(0.262),0.274), \\
+& Tcl \sim lognormal(log(25.7),0.294), \\
+& fr_{CL}, fr_{Q},fr_{V1},fr_{V2} \sim lognormal(log(1),0.25), \\
+& \nu \sim gamma(2,0.1),\\
+& \omega_{CL}\sim lognormal(log(0.351),0.25), \\
+& \omega_{Q} \sim lognormal(log(0.773),0.25), \\
+& \omega_{V_1} \sim lognormal(log(0.711),0.25), \\ 
+& \omega_{V_2} \sim lognormal(log(0.229),0.25), \\
+& allo_{CL},allo_{Q} \sim normal(0.75,0.05), \\
+& allo_{V_1}, allo_{V_2} \sim normal(1,0.05), \\
+& \sigma_{1}\sim lognormal(log(0.2),0.05), \\
+& p(LL') \propto LKJ(4) \cdot \Pi_u N(c_u, 0.125), \\
+& c_u = [0.538,-0.036,0.323,-0.110,-0.199,-0.144]
+  \end{aligned}
+$$
+
+LKJ(4) ensure that the density is uniform over correlation matrices of order 4 and u denotes the unique lower triangular elements of correlation matrix (<http://srmart.in/informative-priors-for-correlation-matrices-an-easy-approach/>)
+
+$fr$ is a form of a commensurate prior [@hobbs_commensurate_2012].
+
+# Format data for Stan
+
+```{r standata, include=TRUE}
+
+xdata <- subset(xdata, OUTLIERS == 0)
+
+#' Format data for Stan
+nt <- nrow(xdata)
+iObs <- with(xdata, (1:nrow(xdata))[EVID == 0])
+nObs <- length(iObs)
+xsub <- subset(xdata, !duplicated(ID))
+nSubjects <- length(xsub$ID)
+start <- (1:nt)[!duplicated(xdata$ID)]
+end <- c(start[-1] - 1, nt)
+
+nIIV <- 4
+weight<- xdata$WT
+age <- xdata$AGEM
+time <- xdata$TIMEh
+cObs <- xdata$DV[iObs]
+amt <-  xdata$AMT
+rate <- xdata$RATE
+cmt <- 2+xdata$AGEM*0
+evid <- xdata$EVID
+ii <- xdata$AGEM*0
+addl <- xdata$AGEM*0
+ss <- xdata$AGEM*0
+runestimation<-1
+
+#' create stan data set
+ data_list <- with(xdata,
+             list(nt = nt,
+                  nObs = nObs,
+                  nSubjects = nSubjects,
+                  nIIV = 4,
+                  iObs = iObs,
+                  start = start,
+                  end = end,
+                  weight= WT,
+                  age = AGEM,
+                  time = TIMEh,
+                  cObs = DV[iObs],
+                  amt =  AMT,
+                  rate = RATE,
+                  cmt = 2+AGEM*0,
+                  evid = EVID,
+                  ii = AGEM*0,
+                  addl = AGEM*0,
+                  ss = AGEM*0,
+                  runestimation=1))
+
+write_stan_json(data_list, "../standata/model_data.json", always_decimal = FALSE)
+data_list$runestimation<-0
+write_stan_json(data_list, "../standata/prior_model_data.json", always_decimal = FALSE)
+
+#' create initial estimates
+init <- function(){
+  list(CLHat = exp(rnorm(1, log(14.6),0.25)),
+       QHat = exp(rnorm(1, log(157),0.5)),
+       V1Hat = exp(rnorm(1, log(62.5),0.5)),
+       V2Hat = exp(rnorm(1, log(119),0.5)),
+       betaHat = exp(rnorm(1, log(0.262),0.25)),
+       TclHat = exp(rnorm(1,log(25.7),0.25)),
+       allo = c(0.75,0.75,1,1) * exp(rnorm(4,0,0.25)),
+       fr = c(1,1,1,1) * exp(rnorm(4,0,0.25)),
+       nu = max(3,rgamma(1,2,0.1)),
+       omega = c(0.5,0.5,0.5,0.5) * exp(rnorm(4, 0, 0.25)),
+       L = diag(4),
+       sigma = exp(rnorm(1,log(0.2),0.25)),
+       etaStd = matrix(0L, 4, nSubjects))
+}
+
+```
+
+The Stan/Torsten model is as follows:
+
+```{r stancode}
+
+writeLines(readLines("../model/clonidine.stan"))
+
+```
+
+## Inference
+
+```{r compile-model, include=TRUE}
+model <- cmdstan_model("../model/clonidine.stan")
+```
+
+```{r inferences, include=TRUE, eval=FALSE}
+
+ fit <- model$sample(
+  data = "../standata/model_data.json",
+  seed = 123,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  refresh = 500,
+  init = init
+ )
+
+  fit0 <- model$sample(
+  data = "../standata/prior_model_data.json",
+  seed = 123,
+  chains = 4,
+  parallel_chains = 4,
+  refresh = 500,
+  init = init
+)
+
+#' save
+ fit$save_object(file = "../standata/fit.RDS")
+ fit0$save_object(file = "../standata/fit0.RDS")
+ 
+#' save stanfit obj for shiny
+ stanfit <- rstan::read_stan_csv(fit$output_files())
+ saveRDS(stanfit, "../standata/stanfit.RDS")
+
+```
+
+```{r loadfits, include=TRUE}
+#' fit is read back using readRDS - for speed
+ fit <- readRDS("../standata/fit.RDS")
+ fit0 <- readRDS("../standata/fit0.RDS")
+```
+
+## lounch shiny
+
+```{r shiny, include=TRUE, eval=FALSE}
+ library(shinystan)
+ stanfit<-readRDS("../standata/stanfit.RDS")
+ launch_shinystan(stanfit)
+```
+
+# Results
+
+## Priors
+
+```{r plotprior, include=TRUE}
+
+mcmc_intervals(fit0$draws(c("CLHat","QHat","V1Hat","V2Hat"))) 
+mcmc_intervals(fit0$draws(c("betaHat","TclHat"))) 
+mcmc_intervals(fit0$draws(c("fr"))) 
+mcmc_intervals(fit0$draws(c("sigma","nu")))
+mcmc_intervals(fit0$draws("omega"))
+mcmc_intervals(fit0$draws("allo"))
+mcmc_intervals(fit0$draws(c("rho"))) 
+
+```
+
+## Posteriors
+
+```{r plotposterior, include=TRUE}
+
+mcmc_intervals(fit$draws(c("CLHat","QHat","V1Hat","V2Hat"))) 
+mcmc_intervals(fit$draws(c("betaHat","TclHat"))) 
+mcmc_intervals(fit$draws(c("fr"))) 
+mcmc_intervals(fit$draws(c("sigma","nu")))
+mcmc_intervals(fit$draws("omega"))
+mcmc_intervals(fit$draws("allo"))
+mcmc_intervals(fit$draws(c("rho"))) 
+
+```
+
+## Summary
+
+```{r summary, include=TRUE}
+fit$print(c("CLHat","QHat","V1Hat","V2Hat", 
+            "betaHat","TclHat", "fr", "sigma", 
+            "nu", "omega", "allo", "rho"), max_rows = 30)
+```
+
+## Individual and population predictions
+
+```{r concordanceplots, include=TRUE}
+
+yrepCond1 <- as_draws_df(fit$draws(variables = c("cObsCond"))) %>%
+  select(starts_with("cObsCond")) %>% as.matrix()
+
+yrepPred1 <- as_draws_df(fit$draws(variables = c("cObsPred"))) %>%
+  select(starts_with("cObsPred")) %>% as.matrix()
+
+t <- xdata$TIME[iObs]  #(read from data)
+id <- xdata$ID[iObs]   #(read from data)
+idx <- unique(id)
+
+for (z in seq_along(idx)) {
+  
+  yobs <- xdata$DV[iObs] 
+  ktore <- (id == idx[z])
+  
+  p1 <- bayesplot::ppc_ribbon(y = yobs[ktore], yrep = yrepCond1[, ktore], x = t[ktore]) +
+        ggplot2::xlab("Time (h)") +
+        ggplot2::ylab("Clonidine (ng/ml)") +
+        geom_point(data = data.frame(x = t[ktore], y = yobs[ktore]), mapping = aes(x, y), inherit.aes = FALSE) +
+        ggtitle(sprintf("Individual, id=%d", idx[z])) +
+        theme(legend.position = "none") +
+        expand_limits(y=0)
+  
+  p2 <- bayesplot::ppc_ribbon(y = yobs[ktore], yrep = yrepPred1[, ktore], x = t[ktore]) +
+        ggplot2::xlab("Time (h)")+
+        geom_point(data = data.frame(x = t[ktore], y = yobs[ktore]), mapping = aes(x, y), inherit.aes = FALSE) +
+        ggtitle(sprintf("Population, id=%d", idx[z]))+
+        theme(legend.position = "none") +
+        expand_limits(y=0)
+  
+  plot12 <- grid.arrange(grobs = list(p1, p2), ncol = 2, nrow = 1)
+  
+   ggsave(paste0("../deliv/figures/concordance-plots-id-", idx[z],".png"),
+        plot=plot12, 
+        width = 15, height = 15, units = "cm",  dpi=300)
+}
+ 
+```
+
+## Individual parameters vs. covariates
+
+```{r covariets, include=TRUE}
+
+thetaM<-data.frame(log(matrix(fit$summary("etaM")$mean, nrow = length(start))))
+q5thetaM<-data.frame(log(matrix(fit$summary("etaM")$q5, nrow = length(start))))
+q95thetaM<-data.frame(log(matrix(fit$summary("etaM")$q95, nrow = length(start))))
+
+names(thetaM)[names(thetaM) == 'X1'] <- 'etaCL'
+names(thetaM)[names(thetaM) == 'X2'] <- 'etaQ'
+names(thetaM)[names(thetaM) == 'X3'] <- 'etaV1'
+names(thetaM)[names(thetaM) == 'X4'] <- 'etaV2'
+
+names(q5thetaM)[names(q5thetaM) == 'X1'] <- 'etaCL5'
+names(q5thetaM)[names(q5thetaM) == 'X2'] <- 'etaQ5'
+names(q5thetaM)[names(q5thetaM) == 'X3'] <- 'etaV15'
+names(q5thetaM)[names(q5thetaM) == 'X4'] <- 'etaV25'
+
+names(q95thetaM)[names(q95thetaM) == 'X1'] <- 'etaCL95'
+names(q95thetaM)[names(q95thetaM) == 'X2'] <- 'etaQ95'
+names(q95thetaM)[names(q95thetaM) == 'X3'] <- 'etaV195'
+names(q95thetaM)[names(q95thetaM) == 'X4'] <- 'etaV295'
+
+thetaM <- cbind(thetaM,q5thetaM,q95thetaM)
+
+thetaM$age<-xdata$AGE[start]
+thetaM$bw<-xdata$WT[start]
+
+cov = c("age","bw")
+
+for (z in seq_along(cov)) {
+
+p1<-ggplot(thetaM, aes_string(x=cov[z], y="etaCL")) + 
+  geom_point()+
+  geom_errorbar(aes(ymin=etaCL5, ymax=etaCL95), width=.2, position=position_dodge(0.05))+
+  geom_hline(yintercept = 0, color="gray", linetype="dotted")
+
+p2<-ggplot(thetaM, aes_string(x=cov[z], y="etaQ")) + 
+  geom_point()+
+  geom_errorbar(aes(ymin=etaQ5, ymax=etaQ95), width=.2, position=position_dodge(0.05))+
+  geom_hline(yintercept = 0, color="gray", linetype="dotted")
+
+p3<-ggplot(thetaM, aes_string(x=cov[z], y="etaV1")) +
+  geom_point()+
+  geom_errorbar(aes(ymin=etaV15, ymax=etaV195), width=.2, position=position_dodge(0.05))+
+  geom_hline(yintercept = 0, color="gray", linetype="dotted")
+
+p4<-ggplot(thetaM, aes_string(x=cov[z],y="etaV2")) +
+  geom_point()+
+  geom_errorbar(aes(ymin=etaV25, ymax=etaV295), width=.2, position=position_dodge(0.05))+
+  geom_hline(yintercept = 0, color="gray", linetype="dotted")
+
+plot1234 <- grid.arrange(grobs = list(p1, p2, p3, p4), nraw=4)
+
+ ggsave(paste0("../deliv/figures/covariance-plots-", cov[z],".png"),
+        plot=plot1234, 
+        width = 15, height = 15, units = "cm",  dpi=300)
+}
+
+```
+
+## GOF
+
+```{r GOF, include=TRUE}
+
+ yobs <- xdata$DV[iObs]
+
+ p1 <- ppc_intervals(y = 1000+yobs, yrep = yrepCond1[,], x = yobs) + 
+   xlab("Observed (ng/ml)") +
+   ylab("Individual predictions (ng/ml)") +
+   scale_y_log10(limits = c(0.1, 100)) + 
+   scale_x_log10(limits = c(0.1, 100)) +
+   theme(legend.position = "none") +
+   geom_abline(intercept = 0, slope = 1, color="grey", linetype="dotted")
+ p2 <-ppc_intervals(y = 1000+yobs, yrep = yrepPred1[,], x = yobs) +
+  xlab("Observed (ng/ml)") + 
+   ylab("Population predictions (ng/ml)") +
+   scale_y_log10(limits = c(0.1, 100)) +
+   scale_x_log10(limits = c(0.1, 100)) +
+  theme(legend.position = "none") +
+  geom_abline(intercept = 0, slope = 1, color="grey", linetype="dotted")
+ 
+
+ plot12 <- grid.arrange(grobs = list(p1, p2), ncol=2, nraw=1)
+ 
+ ggsave("../deliv/figures/gof.png", 
+        plot=plot12, 
+        width = 15, height = 15, units = "cm",  dpi=300)
+
+```
+
+
+# References {.unnumbered}
+
+::: {#refs}
+:::
+
+# Licenses {.unnumbered}
+
+-   Code & copy; 2023, Paweł Wiczling, licensed under BSD-3.
+-   Text & copy; 2023, Paweł Wiczling, licensed under CC-BY-NC 4.0.
+
+# Original Computing Environment {.unnumbered}
+
+```{r}
+sessionInfo()
+```
+
+<br />

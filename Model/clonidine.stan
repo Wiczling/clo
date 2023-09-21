@@ -84,7 +84,7 @@ parameters{
 
 transformed parameters{
   vector<lower = 0>[nIIV] thetaHat;
-  matrix<lower = 0>[nSubjects, nIIV] thetaM; // variable required for Matt's trick
+  matrix<lower = 0>[nSubjects, nIIV] etaM; // variable required for Matt's trick
   real<lower = 0> theta[nTheta];
   matrix<lower = 0>[nCmt, nt] x;
   row_vector<lower = 0>[nt] cHat;
@@ -96,15 +96,15 @@ transformed parameters{
   thetaHat[4] = V2Hat;
 
  // Matt's trick to use unit scale 
-  thetaM = (rep_matrix(thetaHat, nSubjects) .* exp(diag_pre_multiply(omega, L * etaStd)))'; 
+  etaM =  exp(diag_pre_multiply(omega, L * etaStd))'; 
   
   for(j in 1:nSubjects)
   {
 
-    theta[1] = thetaM[j, 1] * fr[1] * (weight[start[j]] / 70)^allo[1] * (1-(1-betaHat)*exp(-(4*age[start[j]])*0.693/TclHat)); // CL
-    theta[2] = thetaM[j, 2] * fr[2] * (weight[start[j]] / 70)^allo[2]; // Q
-    theta[3] = thetaM[j, 3] * fr[3] * (weight[start[j]] / 70)^allo[3]; // V1
-    theta[4] = thetaM[j, 4] * fr[4] * (weight[start[j]] / 70)^allo[4]; // V2
+    theta[1] = thetaHat[1] * etaM[j, 1] * fr[1] * (weight[start[j]] / 70)^allo[1] * (1-(1-betaHat)*exp(-(4*age[start[j]])*0.693/TclHat)); // CL
+    theta[2] = thetaHat[2] * etaM[j, 2] * fr[2] * (weight[start[j]] / 70)^allo[2]; // Q
+    theta[3] = thetaHat[3] * etaM[j, 3] * fr[3] * (weight[start[j]] / 70)^allo[3]; // V1
+    theta[4] = thetaHat[4] * etaM[j, 4] * fr[4] * (weight[start[j]] / 70)^allo[4]; // V2
     theta[5] = 0; // ka
 
     x[,start[j]:end[j]] = pmx_solve_twocpt(time[start[j]:end[j]], 
@@ -162,13 +162,13 @@ model{
 
 generated quantities{
     real cObsCond[nObs];
-    real log_lik[nObs];
+ //   real log_lik[nObs];
     row_vector[nt] cHatPred;
     real cObsPred[nObs];
     row_vector<lower = 0>[nObs] cHatObsPred;
     matrix[nCmt,nt] xPred;
     matrix[nIIV, nSubjects] etaStdPred;
-    matrix<lower=0>[nSubjects, nIIV] thetaPredM;
+    matrix<lower=0>[nSubjects, nIIV] etaPredM;
     corr_matrix[nIIV] rho;
     real<lower = 0> thetaPred[nTheta];
 
@@ -180,14 +180,14 @@ generated quantities{
       }
     }
 
-    thetaPredM = (rep_matrix(thetaHat, nSubjects) .* exp(diag_pre_multiply(omega, L * etaStdPred)))';
+    etaPredM = exp(diag_pre_multiply(omega, L * etaStdPred))';
 
     for(j in 1:nSubjects){
 
-      thetaPred[1] = thetaPredM[j,1]* (weight[start[j]] / 70)^allo[1] * (1-(1-betaHat)*exp(-(4*age[start[j]])*0.693/TclHat)); // CL
-      thetaPred[2] = thetaPredM[j,2]* (weight[start[j]] / 70)^allo[2]; // Q 
-      thetaPred[3] = thetaPredM[j,3]* (weight[start[j]] / 70)^allo[3]; // V1
-      thetaPred[4] = thetaPredM[j,4]* (weight[start[j]] / 70)^allo[4]; // V2
+      thetaPred[1] = thetaHat[1] * etaPredM[j,1] * (weight[start[j]] / 70)^allo[1] * (1-(1-betaHat)*exp(-(4*age[start[j]])*0.693/TclHat)); // CL
+      thetaPred[2] = thetaHat[2] * etaPredM[j,2] * (weight[start[j]] / 70)^allo[2]; // Q 
+      thetaPred[3] = thetaHat[3] * etaPredM[j,3] * (weight[start[j]] / 70)^allo[3]; // V1
+      thetaPred[4] = thetaHat[4] * etaPredM[j,4] * (weight[start[j]] / 70)^allo[4]; // V2
       thetaPred[5] = 0; // ka 
     
       xPred[,start[j]:end[j]] = pmx_solve_twocpt(time[start[j]:end[j]],
@@ -208,6 +208,6 @@ cHatObsPred = cHatPred[iObs];
   for(i in 1:nObs){
       cObsCond[i] = exp(student_t_rng(nu,log(fmax(machine_precision(),cHatObs[i])), sigma)); // individual predictions
       cObsPred[i] = exp(student_t_rng(nu,log(fmax(machine_precision(),cHatObsPred[i])), sigma)); // population predictions
-      log_lik[i] = student_t_lpdf(cObs[i] | nu, log(fmax(machine_precision(),cHatObs[i])), sigma);  
+//   log_lik[i] = student_t_lpdf(cObs[i] | nu, log(fmax(machine_precision(),cHatObs[i])), sigma);  
   }
 }

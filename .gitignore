@@ -5,7 +5,7 @@
 # Session Data files
 .RData
 
-# Executable programs 
+# Executable programs
 .exe
 
 # User-specific files
@@ -41,3 +41,5 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+/.quarto/
